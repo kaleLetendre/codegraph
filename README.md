@@ -4,7 +4,8 @@ codegraph indexes your codebase into a structured graph of its symbols and how t
 connect. Instead of grepping and reading whole files, Claude reads the exact slice it
 needs from that graph — so it answers code questions using **up to half the tokens** a
 session without it would spend, at the same accuracy (measured across held-out A/B
-tests). Embedded, no daemon, nothing to compile. **Set it up once and forget it.**
+tests). Less to read also means **faster answers and lower cost**. Embedded, no daemon,
+nothing to compile. **Set it up once and forget it.**
 
 ```mermaid
 flowchart LR
@@ -16,7 +17,7 @@ flowchart LR
   end
   subgraph WI["With codegraph"]
     direction TB
-    b1["query the graph"] --> b2["read just the symbol"] --> b3["same answer<br/><b>~half the cost</b>"]
+    b1["query the graph"] --> b2["read just the symbol"] --> b3["same answer<br/><b>~half the cost · faster</b>"]
   end
 ```
 
