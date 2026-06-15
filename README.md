@@ -34,6 +34,7 @@ flowchart LR
 - [Install](#install)
 - [Index a workspace (once)](#index-a-workspace-once)
 - [What Claude can do](#what-claude-can-do)
+- [Cross-repo connections](#cross-repo-connections)
 - [Languages](#languages)
 - [How it works](#how-it-works)
 
@@ -82,6 +83,34 @@ Rarely needed: `/codegraph-status` (health), `/codegraph-rebuild` (after a big r
 
 You don't call these — Claude does, automatically.
 
+## Cross-repo connections
+
+Within one repo, codegraph links calls by name. **Across** repos it won't guess by name
+(a shared name like `start` in two repos would be a false link), so it bridges them
+honestly — and how depends on how your repos actually connect:
+
+- **Services that talk over the wire** (HTTP, queues): there is *no* code-level call
+  between them — the producer sends a message, the consumer handles it, and the only
+  thing they share is the message shape. Code-only analysis can't connect that. So
+  codegraph bridges them through the **contract**: point it at an **AsyncAPI** spec (any
+  `contracts` / `asyncapi` / `*-contracts` dir) and it pulls each contract's wire tokens
+  (endpoint/channel paths + payload field names), links any symbol that mentions a token
+  to that Contract, and joins producers to consumers that share one. Heuristic and opt-in
+  — no spec, no cross-repo edges. Walk these seams with `trace_contract` / `path_between`.
+
+  ```mermaid
+  flowchart LR
+    A["producer<br/>repo A"]:::r -- mentions token --> C{{"Contract<br/>(AsyncAPI)"}}:::c
+    B["consumer<br/>repo B"]:::r -- mentions token --> C
+    A -. linked across repos .-> B
+    classDef r fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef c fill:#fef3c7,stroke:#f59e0b,color:#78350f,font-weight:bold
+  ```
+
+- **Packages that import each other in-process** (a monorepo where A imports B): the link
+  *is* in the code (the import), but codegraph doesn't follow cross-repo imports yet —
+  it's on the roadmap.
+
 ## Languages
 
 | Language | Status |
@@ -114,10 +143,9 @@ flowchart LR
 
 Tree-sitter parses your files into symbols and call sites and stores them in one
 per-workspace SQLite file (`<workspace>/.codegraph/graph.db`). Calls resolve by name
-within a repo. If the workspace has an **AsyncAPI** contract spec, codegraph also adds
-heuristic cross-repo links (likely producer↔consumer, matched on shared wire tokens) —
-it was built and tested on a real four-repo workspace wired this way. Edits re-index a
-file at a time via hooks, so the graph stays fresh without you touching it.
+within a repo; cross-repo links go through shared contracts (see above). It was built and
+tested on a real four-repo workspace wired this way. Edits re-index a file at a time via
+hooks, so the graph stays fresh without you touching it.
 
 It's a static, name-based graph, so it's blind to function-pointer/callback dispatch and
 string literals, and a C caller list is an upper bound (it can't see `#ifdef`s) — the
