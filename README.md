@@ -99,7 +99,7 @@ can't connect that, so codegraph bridges them through that shape, described as a
 **What you provide (opt-in):**
 
 - A directory at the workspace root named `contracts`, `asyncapi`, or `*-contracts`
-  (e.g. `ven-tms-contracts`) — or pass `--contracts <dir>`.
+  (e.g. `api-contracts`) — or pass `--contracts <dir>`.
 - Inside it, one or more **AsyncAPI 3.0** specs named `*.asyncapi.yaml` / `*.asyncapi.yml`
   (other files are ignored).
 - Nothing if you don't have specs — no contracts dir simply means no cross-repo edges;
