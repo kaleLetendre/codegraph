@@ -12,11 +12,11 @@ flowchart LR
   Q --> b1
   subgraph WO["Without codegraph"]
     direction TB
-    a1["grep the whole tree"] --> a2["read whole files"] --> a3["answer<br/><b>~2x the tokens</b>"]
+    a1["grep the whole tree"] --> a2["read whole files"] --> a3["answer<br/><b>full token cost</b>"]
   end
   subgraph WI["With codegraph"]
     direction TB
-    b1["query the graph"] --> b2["read just the symbol"] --> b3["same answer<br/><b>~half the tokens</b>"]
+    b1["query the graph"] --> b2["read just the symbol"] --> b3["same answer<br/><b>~half the cost</b>"]
   end
 ```
 
