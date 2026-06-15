@@ -13,7 +13,6 @@
       "name": "codegraph",
       "source": ".",
       "description": "Index a project into a cross-repo call graph (embedded SQLite, no daemon or JVM) exposed as MCP tools, so Claude navigates/audits/refactors code at ~40-60% fewer tokens than grep+Read. Project-scoped, balanced auto-update, self-refresh via update_graph. /codegraph-init to start.",
-      "version": "0.3.0",
       "category": "development",
       "keywords": ["graph", "sqlite", "mcp", "call-graph", "cross-repo", "contracts", "tokens", "code-navigation"]
     }
