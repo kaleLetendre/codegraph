@@ -79,9 +79,19 @@ You don't call these — Claude does, automatically.
 
 ## Languages
 
-**C** and **TypeScript / JavaScript** today. Adding Python, Java, etc. is small: drop in
-the tree-sitter grammar plus two short rules (what counts as a definition, what counts as
-a call). Everything downstream is language-agnostic.
+| Language | Status |
+|---|---|
+| C | ✅ supported |
+| TypeScript / JavaScript | ✅ supported |
+| Python | 🔜 planned |
+| Go | 🔜 planned |
+| Rust | 🔜 planned |
+| Java | 🔜 planned |
+| C++ | 🔜 planned |
+
+Adding one is small — a tree-sitter grammar plus two short rules (what counts as a
+definition, what counts as a call); everything downstream is language-agnostic — so the
+roadmap is really just "which next."
 
 ## How it works
 
