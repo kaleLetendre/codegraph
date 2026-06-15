@@ -1,0 +1,24 @@
+{
+  "name": "codegraph",
+  "version": "0.3.0",
+  "description": "Cross-repo call/association graph builder + MCP query server, backed by an embedded WASM SQLite file (no daemon, no JVM, no native build)",
+  "type": "module",
+  "bin": {
+    "codegraph": "./src/build.js"
+  },
+  "scripts": {
+    "build": "node src/build.js",
+    "export:gexf": "node src/export-gexf.js",
+    "export:html": "node src/export-html.js",
+    "mcp": "node src/mcp/server.js",
+    "test": "node test/run.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "sql.js": "^1.14.1",
+    "tree-sitter": "^0.22.4",
+    "tree-sitter-c": "^0.23.4",
+    "tree-sitter-typescript": "^0.23.2",
+    "yaml": "^2.6.0"
+  }
+}

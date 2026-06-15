@@ -1,0 +1,22 @@
+{
+  "name": "codegraph",
+  "version": "0.3.0",
+  "description": "Cross-repo call/association graph in an embedded SQLite file (no daemon, no JVM), exposed to Claude as MCP tools. Index a project once; navigate/audit/refactor code at ~40-60% fewer tokens than grep+Read. Project-scoped, balanced auto-update, self-refresh via update_graph.",
+  "author": "Kale Letendre",
+  "commands": [
+    "./commands/codegraph-init.md",
+    "./commands/codegraph-update.md",
+    "./commands/codegraph-rebuild.md",
+    "./commands/codegraph-status.md",
+    "./commands/codegraph-teardown.md",
+    "./commands/codegraph-remove.md",
+    "./commands/codegraph-build.md"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": {
+    "codegraph": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/src/mcp/server.js"]
+    }
+  }
+}

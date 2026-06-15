@@ -1,0 +1,13 @@
+# Node
+node_modules/
+
+# Build artifacts / exports (generated graph + visualizations embed source symbol
+# names, so they are never committed)
+*.log
+out/
+*.db
+*.db-wal
+*.db-shm
+codegraph-*.html
+codegraph*.gexf
+.codegraph/
