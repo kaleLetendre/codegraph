@@ -81,9 +81,6 @@ them.
 | Java | 🔜 planned |
 | C++ | 🔜 planned |
 
-Adding one is small — a tree-sitter grammar plus two short rules (what counts as a
-definition, what counts as a call); everything downstream is language-agnostic.
-
 ## Install
 
 Inside Claude Code, run these three lines — no compile step on mainstream platforms
