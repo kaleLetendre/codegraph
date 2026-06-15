@@ -2,10 +2,10 @@
 
 codegraph indexes your codebase into a structured graph of its symbols and how they
 connect. Instead of grepping and reading whole files, Claude reads the exact slice it
-needs from that graph — answering the same questions just as accurately for **about half
-the tokens** (40–60% fewer in held-out A/B tests). Less to read also means **faster
-answers and lower cost**. Embedded, no daemon, nothing to compile. **Set it up once and
-forget it.**
+needs from that graph — answering the same questions for **about half the tokens**
+(≈40–60% less in internal A/B testing), at no loss in answer quality. Less to read also
+means **faster answers and lower cost**. Everything stays local — the graph is just a
+file in your workspace, nothing is uploaded. **Set it up once and forget it.**
 
 ```mermaid
 flowchart LR
@@ -37,7 +37,8 @@ flowchart LR
 
 ## Install
 
-Three lines, nothing compiles:
+Inside Claude Code, run these three lines — no compile step on mainstream platforms
+(Linux/macOS/Windows × x64/arm64; the native bits are prebuilt and vendored):
 
 ```
 /plugin marketplace add kaleLetendre/codegraph
@@ -54,12 +55,13 @@ side by side:
 /codegraph-init
 ```
 
-That's the whole job — **once per workspace, never again**. It finds every repo under
-that root, indexes them into one graph, and links calls **across** repos through shared
-API/contracts. It keeps itself current as you edit (set and forget). From then on just
-talk to Claude normally ("where is X", "what calls Y", "what breaks if I change Z", "how
-does A reach B") and it answers from the graph — cheaper and faster. Nothing else to run,
-ever.
+That's the whole job — **once per workspace**. It finds every repo under that root and
+indexes them into one graph. (If your repos share an **AsyncAPI** contract spec, it also
+links likely producers↔consumers across repos through it — a heuristic, opt-in extra.)
+It keeps itself current as you edit (set and forget) for everyday work; after a big
+refactor or mass rename, run `/codegraph-rebuild` once to resync. From then on just talk
+to Claude normally ("where is X", "what calls Y", "what breaks if I change Z") and it
+answers from the graph — cheaper and faster.
 
 Rarely needed: `/codegraph-status` (health), `/codegraph-rebuild` (after a big refactor),
 `/codegraph-remove` (uninstall from a workspace).
@@ -108,10 +110,15 @@ flowchart LR
 ```
 
 Tree-sitter parses your files into symbols and call sites and stores them in one
-per-workspace SQLite file (`<workspace>/.codegraph/graph.db`). Calls resolve within a
-repo; cross-repo links flow through shared API/contract nodes — it was built and tested
-on a real multi-repo workspace (four repos linked through shared contracts). Edits
-re-index a file at a time via hooks, so the graph stays fresh without you touching it.
+per-workspace SQLite file (`<workspace>/.codegraph/graph.db`). Calls resolve by name
+within a repo. If the workspace has an **AsyncAPI** contract spec, codegraph also adds
+heuristic cross-repo links (likely producer↔consumer, matched on shared wire tokens) —
+it was built and tested on a real four-repo workspace wired this way. Edits re-index a
+file at a time via hooks, so the graph stays fresh without you touching it.
+
+It's a static, name-based graph, so it's blind to function-pointer/callback dispatch and
+string literals, and a C caller list is an upper bound (it can't see `#ifdef`s) — the
+tools flag this so Claude verifies when it matters.
 
 **Git is optional.** codegraph doesn't need it to work — it just walks the folder. When
 git *is* present it uses it to spot what changed between sessions for cheap refreshes;
