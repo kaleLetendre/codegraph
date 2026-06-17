@@ -4,7 +4,7 @@
 // shapes. Graph traversals run as in-JS BFS over the edge rows (the graph is
 // small), which is simpler and faster here than recursive SQL.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const isTest = (f) => f.includes('tests/') || f.includes('/test/') || f.includes('.test.') || f.includes('_test.') || f.includes('/test_');
@@ -16,6 +16,40 @@ function symbolMatches(db, project, name, repo, file) {
   if (repo) q += ' AND repo=@repo';
   if (file) q += ' AND instr(file,@file)>0';
   return db.prepare(q + ' ORDER BY repo,file,startLine').all({ project, name, repo, file });
+}
+
+// Absolute path -> {mtime, size} for every indexed file in the project. The abs
+// path is reconstructed from the file's repo root, matching what changedSince and
+// build.js produce, so the keys line up for staleness comparison.
+export function indexedFiles(db, project) {
+  const rows = db.prepare(
+    `SELECT f.path AS path, f.mtime AS mtime, f.size AS size, r.root AS root
+       FROM files f JOIN repos r ON r.project = f.project AND r.name = f.repo
+      WHERE f.project = ?`,
+  ).all(project);
+  const m = new Map();
+  for (const r of rows) m.set(join(r.root, r.path), { mtime: r.mtime, size: r.size });
+  return m;
+}
+
+// Of the given candidate absolute paths, which actually differ from what's indexed
+// — changed on disk (mtime/size mismatch), newly added (not indexed), or deleted
+// (gone from disk)? This is independent of git commit state, so a file that was
+// edited, re-indexed, but not yet committed is correctly reported as FRESH (its
+// recorded mtime matches disk) instead of stale forever. mtime is compared with a
+// 1ms tolerance to absorb float/filesystem rounding.
+export function staleAmong(db, project, candidates) {
+  if (!candidates || !candidates.length) return [];
+  const indexed = indexedFiles(db, project);
+  const stale = [];
+  for (const abs of candidates) {
+    let st;
+    try { st = statSync(abs); } catch { stale.push(abs); continue; } // deleted/unreadable → re-index prunes it
+    const rec = indexed.get(abs);
+    if (!rec) { stale.push(abs); continue; } // present on disk but never indexed → new file
+    if (rec.size !== st.size || Math.abs((rec.mtime ?? 0) - st.mtimeMs) > 1) stale.push(abs);
+  }
+  return stale;
 }
 
 export function graphStats(db, project) {

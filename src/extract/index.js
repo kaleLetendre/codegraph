@@ -2,7 +2,7 @@
 // Repo/File/Symbol nodes and DEFINED_IN edges, and accumulate raw (unresolved)
 // calls that resolve.js will turn into CALLS edges.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { walkSources } from './walk.js';
 import { parseSource } from './parse.js';
 import { symbolId, moduleId } from '../model.js';
@@ -26,8 +26,14 @@ export function extractCode(graph, rootDir, log = () => {}, fileFilter = null) {
     }
     if (source.length > MAX_BYTES) continue;
 
+    // Record the on-disk mtime+size so staleness can be "differs from what was
+    // indexed" rather than "differs from the last git sha" (which never clears
+    // for an uncommitted edit). Best-effort: a stat failure leaves them null.
+    let mtime = null, size = null;
+    try { const st = statSync(f.abs); mtime = st.mtimeMs; size = st.size; } catch { /* keep null */ }
+
     graph.addRepo(f.repo, f.repoRoot);
-    graph.addFile(f.repo, f.relPath, f.lang);
+    graph.addFile(f.repo, f.relPath, f.lang, mtime, size);
     graph.addEdge('IN_REPO', `file:${f.repo}:${f.relPath}`, `repo:${f.repo}`);
 
     // Synthetic module symbol owns top-level calls.

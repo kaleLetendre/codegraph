@@ -41,7 +41,7 @@ export class Graph {
   constructor(project = null) {
     this.project = project;
     this.repos = new Map(); // id -> {id, name, root, project}
-    this.files = new Map(); // id -> {id, repo, path, lang, project}
+    this.files = new Map(); // id -> {id, repo, path, lang, mtime, size, project}
     this.symbols = new Map(); // id -> {id, repo, file, name, kind, lang, startLine, endLine, project}
     this.contracts = new Map(); // id -> {id, name, kind, file, project}
     this.edges = []; // {type, from, to, props}
@@ -53,9 +53,9 @@ export class Graph {
     return id;
   }
 
-  addFile(repo, path, lang) {
+  addFile(repo, path, lang, mtime = null, size = null) {
     const id = fileId(repo, path);
-    if (!this.files.has(id)) this.files.set(id, { id, repo, path, lang, project: this.project });
+    if (!this.files.has(id)) this.files.set(id, { id, repo, path, lang, mtime, size, project: this.project });
     return id;
   }
 

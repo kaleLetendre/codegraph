@@ -110,6 +110,60 @@ async function fixtureTests() {
   rmSync(work, { recursive: true, force: true });
 }
 
+// Freshness model (v2): staleness is "differs from what was indexed" (mtime/size),
+// NOT "differs from the last committed git sha". The old git-only check flagged an
+// uncommitted-but-already-reindexed file as stale forever, so update_graph could
+// never converge and Claude treated the graph as perpetually out of date. Assert:
+//   1. a full build records each file's mtime/size,
+//   2. an unchanged file is not stale,
+//   3. an edited file IS stale,
+//   4. re-indexing it clears the staleness EVEN THOUGH it's never committed.
+async function freshnessTests() {
+  const work = mkdtempSync(join(tmpdir(), 'cg-fresh-'));
+  const src = join(work, 'src');
+  cpSync(FIXTURE, src, { recursive: true });
+  const project = realpathSync(src);
+  const db = join(work, 'graph.db');
+
+  await runBuild({ target: src, project, db, reset: true });
+  let conn = connect(db, { readonly: true });
+
+  // (1) mtime/size recorded for indexed files.
+  const indexed = Q.indexedFiles(conn, project);
+  const aPath = join(project, 'a.c');
+  ok(indexed.has(aPath), 'freshness: a.c is in the indexed file set');
+  ok(indexed.get(aPath)?.mtime > 0 && indexed.get(aPath)?.size > 0, 'freshness: a.c has a recorded mtime + size');
+
+  // (2) nothing changed on disk → nothing stale.
+  eq(Q.staleAmong(conn, project, [aPath]).length, 0, 'freshness: unchanged file is not stale');
+  conn.close();
+
+  // (3) edit a.c and bump its mtime into the future → stale vs the indexed record.
+  appendFileSync(aPath, '\nint fresh_fn(int n) { return a_helper(n); }\n');
+  const future = Date.now() / 1000 + 5;
+  utimesSync(aPath, future, future);
+  conn = connect(db, { readonly: true });
+  eq(Q.staleAmong(conn, project, [aPath]).length, 1, 'freshness: edited file is detected stale');
+  conn.close();
+
+  // (4) re-index (no commit happens here) → staleness clears, proving the signal
+  // tracks the index, not git. This is the loop that used to never converge.
+  await runBuild({ target: src, project, db, files: ['a.c'] });
+  conn = connect(db, { readonly: true });
+  eq(Q.staleAmong(conn, project, [aPath]).length, 0, 'freshness: re-indexed (uncommitted) file is no longer stale');
+  has(Q.findSymbol(conn, project, 'fresh_fn'), 'a.c', 'freshness: the re-indexed edit is queryable');
+  conn.close();
+
+  // A deleted file (gone from disk) is stale until pruned.
+  const utilPath = join(project, 'util.c');
+  rmSync(utilPath);
+  conn = connect(db, { readonly: true });
+  eq(Q.staleAmong(conn, project, [utilPath]).length, 1, 'freshness: deleted file is detected stale');
+  conn.close();
+
+  rmSync(work, { recursive: true, force: true });
+}
+
 // Two writers re-indexing different files concurrently (the PostToolUse worker
 // firing for two quick edits) must not lose either update. Each writable session
 // is read-file -> mutate -> rename; without the cross-process lock in sqlite.js
@@ -256,6 +310,7 @@ await fixtureTests();
 await pythonTests();
 await jvmLangTests('java', FIXTURE_JAVA, 'App.java');
 await jvmLangTests('kotlin', FIXTURE_KOTLIN, 'App.kt');
+await freshnessTests();
 await concurrencyTest();
 await rebuildDurabilityTest();
 console.log(`\n${pass} passed, ${fail} failed`);

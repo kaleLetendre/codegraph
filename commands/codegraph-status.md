@@ -9,7 +9,8 @@ that's off. **Target** = `${CLAUDE_PROJECT_DIR}` or cwd; call it `<TARGET>`.
 
 1. **Graph health + freshness.** Call the `graph_status` MCP tool. It reports
    whether this project is indexed (counts), the last full build, the auto-update
-   posture, and whether the graph is stale vs current git state.
+   posture, and whether any file's on-disk content differs from what was indexed
+   (the read tools self-heal these on demand, so "stale" here is informational).
 
    Map its output to a fix:
    - "No codegraph for this project" → run `/codegraph-init`
