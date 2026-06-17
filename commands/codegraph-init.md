@@ -71,11 +71,14 @@ Do the steps in order; stop and report if a step fails.
    If they decline, continue — the MCP tool descriptions still carry the economy
    guidance, but note the win is strongest with the directive installed.
 
-5. **Auto-update / hooks.** The plugin ships `SessionStart` + `PostToolUse` hooks
-   that keep the graph fresh; they fire automatically whenever the codegraph
-   plugin is enabled. The posture written in step 3 controls them:
-   - `off` — hooks do nothing
-   - `conservative` — SessionStart catch-up only
+5. **Auto-update / hooks.** The plugin ships `SessionStart`, `PreToolUse`, and
+   `PostToolUse` hooks; they fire automatically whenever the codegraph plugin is
+   enabled. `SessionStart` catches up on out-of-session changes (and re-asserts
+   the directive), `PreToolUse` on `Grep`/`Glob` reminds Claude to prefer the
+   graph (rate-limited per session so it stays cheap), and `PostToolUse` re-indexes
+   edited files. The posture written in step 3 controls them:
+   - `off` — hooks do nothing (no catch-up, no navigation nudge)
+   - `conservative` — SessionStart catch-up + the grep-time navigation nudge
    - `balanced` (default) — + re-index each file Claude edits
    - `aggressive` — + (optional) repo git post-commit/post-merge hooks
 

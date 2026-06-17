@@ -69,7 +69,10 @@ async function main() {
   if (changedCount > 0) {
     emit(`codegraph: ${changedCount} source file(s) changed since last index — refreshing the graph in the background. Prefer the codegraph MCP tools for code navigation.`);
   }
-  emit(''); // fresh — stay quiet
+  // Fresh: re-assert the directive cheaply. The CLAUDE.md block is loaded once
+  // and decays as context grows, so a one-line reminder each session keeps the
+  // graph top-of-mind without re-stating the whole directive.
+  emit('codegraph: graph is indexed and fresh — prefer its MCP tools (find_symbol, get_source, trace_callers/trace_callees, path_between) over grep/Read for code navigation, at ~50% fewer tokens.');
 }
 
 main().catch(() => process.exit(0));
