@@ -6,6 +6,35 @@ the Neo4j-vs-SQLite parity/perf/token experiments — are kept out of this repo.
 
 ---
 
+## D10 — Freshness = "differs from what was indexed" (mtime/size), and reads self-heal — 2026-06-17
+
+**Decision.** Track each file's on-disk `mtime`+`size` in the `files` table (schema
+v1 → v2) and define staleness as *the file on disk differs from what was indexed*,
+not *the working tree differs from the last committed git sha*. The read tools
+(`find_symbol`, `get_source`, `trace_*`, `path_between`, `query_sql`) now self-heal:
+before answering they re-index any file that changed on disk, bounded by a short
+in-process TTL so a burst of queries pays the git+stat probe at most once.
+
+**Why.** Users reported codegraph going unused after they made edits: it "wasn't
+updated," so Claude fell back to grep. Root cause was a logic bug — staleness was
+computed purely from git (`git status --porcelain` + committed diff), so an
+*uncommitted* edit showed as changed **forever**, even right after `update_graph`
+re-indexed it (HEAD hadn't moved, so the stored sha never advanced). `graph_status`
+therefore reported `STALE` perpetually and the update loop never converged. Tracking
+the indexed mtime makes "stale" clear as soon as the file is re-indexed, regardless
+of commit state; self-heal-on-read removes the dependency on Claude noticing
+staleness and calling `update_graph` at all (it also covers edits the user makes
+outside Claude and the edit-then-query race against the background PostToolUse
+re-index).
+
+**Cost.** A schema bump: existing v1 graphs report a schema mismatch and must run
+`/codegraph-rebuild` once (the loader's migrate-on-reset path handles it). Each read
+pays a cheap git-diff + `stat` probe when the TTL window has expired, and a fast
+incremental re-index only when something actually changed. Staleness enumeration
+still seeds from git, so a change in a non-git directory isn't detected on read
+(unchanged from before; the SessionStart catch-up and a manual `update_graph` remain
+the backstops).
+
 ## D9 — WASM SQLite (`sql.js`) is the store, not `better-sqlite3` — 2026-06-15
 
 **Decision.** Back the embedded store with `sql.js` (SQLite compiled to

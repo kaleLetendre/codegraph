@@ -27,7 +27,7 @@ When locating or reading code in this project, prefer the **codegraph** call-gra
 
 **Be economical:** plan a minimal set of queries, trust the result, and don't re-grep what the graph already showed — query count is the dominant token cost, not file reads. The static graph is **blind to (a) function-pointer/callback edges, (b) string literals** (JSON field names, route paths), and **(c) the C preprocessor** — it counts call sites inside \`#if 0\` / disabled \`#ifdef\` blocks, so a C refactor caller-list is an *upper bound*; verify compilation guards before trusting it. Reason about indirect call paths yourself (a callback adapter is its own distinct path), and for wire questions confirm the exact field/endpoint the server actually *reads* with a single targeted grep/get_source. Fall back to grep/Read only for those cases and non-code files.
 
-These are the **registered codegraph MCP tools**, not a CLI. After you edit code, the graph **auto-updates** in the background; if a trace looks stale, call \`update_graph\` (or \`graph_status\` to check freshness). If the tools report the project isn't indexed, run \`/codegraph-init\`.`;
+These are the **registered codegraph MCP tools**, not a CLI. **The graph self-heals on read:** every query re-indexes any file that changed on disk (yours or the user's, committed or not) before answering, so traces reflect the latest code — **do not fall back to grep on the assumption the graph is out of date.** Reach for \`update_graph full:true\` only after a large cross-file rename/refactor (the correctness backstop); \`graph_status\` reports freshness if you want to confirm. If the tools report the project isn't indexed, run \`/codegraph-init\`.`;
 
 export function block() {
   return `${BEGIN}\n${DIRECTIVE}\n${END}`;

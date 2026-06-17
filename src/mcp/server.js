@@ -28,7 +28,7 @@ import { runBuild } from '../build.js';
 import { readState, updateState } from '../../scripts/lib/state.mjs';
 import { changedSince, projectRepos } from '../../scripts/lib/git.mjs';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 // Resolve the active project once at startup. realpath so it matches the build
 // (build.js tags nodes with realpathSync of the init root).
@@ -72,13 +72,56 @@ function withDb(fn, { requireIndexed = true } = {}) {
   }
 }
 
+// --- self-heal on read ------------------------------------------------------
+// The directive tells Claude to TRUST the graph, so the graph must actually be
+// current at query time. Before a read tool answers, cheaply detect source files
+// that changed on disk since they were indexed and re-index just those — so an
+// edit (by Claude or the user, committed or not) is reflected without Claude
+// having to notice staleness and call update_graph. Bounded by a short TTL so a
+// burst of queries pays the git+stat probe at most once per window.
+const FRESH_TTL_MS = 1500;
+let lastFreshAt = 0;
+
+// Read-only probe: of the files git says changed, which actually differ from what
+// was indexed (mtime/size)? Cheap, and free of the old false-positive where an
+// uncommitted-but-already-reindexed file looked stale forever.
+function staleNow() {
+  const p = dbPath();
+  if (!existsSync(p)) return [];
+  let db;
+  try { db = connect(p, { readonly: true }); } catch { return []; }
+  try {
+    if (schemaVersion(db) !== SCHEMA_VERSION) return []; // mismatch → withDb prompts a rebuild
+    const state = readState(PROJECT);
+    let candidates;
+    try { candidates = changedSince(PROJECT, state?.reposLastSha || {}).files; } catch { return []; }
+    return Q.staleAmong(db, PROJECT, candidates);
+  } finally { db.close(); }
+}
+
+async function ensureFresh() {
+  const now = Date.now();
+  if (now - lastFreshAt < FRESH_TTL_MS) return;
+  lastFreshAt = now; // claim the window up front so concurrent reads don't stampede
+  const stale = staleNow();
+  if (!stale.length) return;
+  try { await runBuild({ target: PROJECT, project: PROJECT, files: stale }); }
+  catch { /* best-effort: serve what we have rather than fail the read */ }
+}
+
+// Wrap a read tool: refresh stale files first, then open read-only and serve.
+async function freshRead(fn, opts) {
+  await ensureFresh();
+  return withDb(fn, opts);
+}
+
 const server = new McpServer({ name: 'codegraph', version: VERSION });
 
 // --- graph_stats ------------------------------------------------------------
 server.registerTool('graph_stats', {
   description: 'Overall size of THIS PROJECT\'s code graph: node counts by label, edge counts by type, and per-repo symbol counts. Call this first to confirm the graph is loaded for the active project.',
   inputSchema: {},
-}, async () => withDb((db) => text(Q.graphStats(db, PROJECT))));
+}, async () => freshRead((db) => text(Q.graphStats(db, PROJECT))));
 
 // --- find_symbol ------------------------------------------------------------
 server.registerTool('find_symbol', {
@@ -87,7 +130,7 @@ server.registerTool('find_symbol', {
     name: z.string().describe('Exact symbol name, e.g. "parse_request"'),
     repo: z.string().optional().describe('Restrict to a repo, e.g. "api-server"'),
   },
-}, async ({ name, repo }) => withDb((db) => text(Q.findSymbol(db, PROJECT, name, repo))));
+}, async ({ name, repo }) => freshRead((db) => text(Q.findSymbol(db, PROJECT, name, repo))));
 
 // --- get_source -------------------------------------------------------------
 // Returns ONLY a symbol's definition lines (file:startLine..endLine), read from
@@ -102,7 +145,7 @@ server.registerTool('get_source', {
     file: z.string().optional().describe('Substring of the file path, to disambiguate'),
     context: z.number().optional().describe('Extra lines of context above/below (default 0)'),
   },
-}, async ({ name, repo, file, context }) => withDb((db) => text(Q.getSource(db, PROJECT, name, repo, file, context))));
+}, async ({ name, repo, file, context }) => freshRead((db) => text(Q.getSource(db, PROJECT, name, repo, file, context))));
 
 // --- trace_callees / trace_callers -----------------------------------------
 server.registerTool('trace_callees', {
@@ -115,7 +158,7 @@ server.registerTool('trace_callees', {
     includeTests: z.boolean().optional().describe('Include callees in test files (default false)'),
   },
 }, async ({ name, repo, file, depth, includeTests }) =>
-  withDb((db) => text(Q.traceCallees(db, PROJECT, name, repo, file, depth, includeTests))));
+  freshRead((db) => text(Q.traceCallees(db, PROJECT, name, repo, file, depth, includeTests))));
 
 server.registerTool('trace_callers', {
   description: 'Upward call stack: who calls this symbol, transitively, within its repo. Returns the WHOLE tree in one call (don\'t walk it hop-by-hop) — callers above the symbol. Use to find entrypoints reaching a function. Caveat: the caller set is an UPPER BOUND in C — it includes call sites inside disabled #if 0 / #ifdef blocks (the static graph is blind to the preprocessor); it is also blind to function-pointer/callback dispatch.',
@@ -127,7 +170,7 @@ server.registerTool('trace_callers', {
     includeTests: z.boolean().optional().describe('Include callers in test files (default false)'),
   },
 }, async ({ name, repo, file, depth, includeTests }) =>
-  withDb((db) => text(Q.traceCallers(db, PROJECT, name, repo, file, depth, includeTests))));
+  freshRead((db) => text(Q.traceCallers(db, PROJECT, name, repo, file, depth, includeTests))));
 
 // --- trace_contract ---------------------------------------------------------
 server.registerTool('trace_contract', {
@@ -138,7 +181,7 @@ server.registerTool('trace_contract', {
     includeTests: z.boolean().optional().describe('Include symbols in test files (default false)'),
   },
 }, async ({ contract, token, includeTests }) =>
-  withDb((db) => text(Q.traceContract(db, PROJECT, contract, token, includeTests))));
+  freshRead((db) => text(Q.traceContract(db, PROJECT, contract, token, includeTests))));
 
 // --- path_between -----------------------------------------------------------
 server.registerTool('path_between', {
@@ -151,13 +194,13 @@ server.registerTool('path_between', {
     maxHops: z.number().optional().describe('Max path length, 1-20 (default 12)'),
   },
 }, async ({ from, to, fromRepo, toRepo, maxHops }) =>
-  withDb((db) => text(Q.pathBetween(db, PROJECT, from, to, fromRepo, toRepo, maxHops))));
+  freshRead((db) => text(Q.pathBetween(db, PROJECT, from, to, fromRepo, toRepo, maxHops))));
 
 // --- graph_status -----------------------------------------------------------
 // A cheap "is the graph healthy and fresh for this project?" check Claude calls
 // to decide whether to update before trusting a trace.
 server.registerTool('graph_status', {
-  description: 'Health + freshness of the codegraph for THIS project: is the project indexed (counts), when was the last full build, and is the graph STALE versus the repos\' current git HEAD / uncommitted edits. Call this when a trace looks out of date; if it reports stale, call update_graph.',
+  description: 'Health + freshness of the codegraph for THIS project: is the project indexed (counts), when was the last full build, and is the graph STALE (any file whose on-disk content differs from what was indexed). The read tools already self-heal — they re-index changed files before answering — so you rarely need this; use it only to confirm freshness or before a full rebuild after a big refactor.',
   inputSchema: {},
 }, async () => withDb((db) => {
   const stats = Q.graphStats(db, PROJECT);
@@ -168,10 +211,12 @@ server.registerTool('graph_status', {
     `Last full build: ${state?.lastFullBuild || 'unknown'}`,
     `Auto-update posture: ${state?.autoUpdate || '(not set)'}`,
   ];
-  // Staleness: source files changed since the last index (committed diff vs
-  // stored per-root sha + uncommitted edits). changedSince folds in both.
+  // Staleness: of the files git says changed (committed diff vs stored per-root
+  // sha + uncommitted edits), only those whose on-disk mtime/size differs from
+  // what was indexed are actually stale — so a re-indexed-but-uncommitted file is
+  // NOT counted (the old git-only check flagged it forever).
   let changed = [];
-  try { changed = changedSince(PROJECT, state?.reposLastSha || {}).files; }
+  try { changed = Q.staleAmong(db, PROJECT, changedSince(PROJECT, state?.reposLastSha || {}).files); }
   catch { /* git not available — skip staleness */ }
   if (changed.length) {
     const preview = changed.slice(0, 5).map((f) => f.replace(PROJECT + '/', '')).join(', ');
@@ -204,14 +249,19 @@ server.registerTool('update_graph', {
       return text(`Full rebuild complete: ${n} symbols indexed. Graph is fresh.`);
     }
 
-    // Incremental: explicit files, else auto-detect from git.
+    // Incremental: explicit files, else auto-detect the files that actually DIFFER
+    // from what's indexed (mtime/size), not merely what git shows as changed — so
+    // an already-reindexed uncommitted file isn't pointlessly rebuilt and the call
+    // reports "already current" instead of churning forever.
     let targets = files;
     let newShas = state?.reposLastSha || {};
     if (!targets || !targets.length) {
-      const c = changedSince(PROJECT, state?.reposLastSha || {});
-      targets = c.files;
-      newShas = { ...newShas, ...c.newShas };
-      if (!targets.length) return text('Graph already current — no changed source files detected.');
+      newShas = { ...newShas, ...changedSince(PROJECT, state?.reposLastSha || {}).newShas };
+      targets = staleNow();
+      if (!targets.length) {
+        updateState(PROJECT, { reposLastSha: newShas }, VERSION); // advance shas; nothing to re-index
+        return text('Graph already current — no changed source files detected.');
+      }
     }
     await runBuild({ target: PROJECT, project: PROJECT, files: targets });
     updateState(PROJECT, { reposLastSha: newShas }, VERSION);
@@ -237,7 +287,7 @@ server.registerTool('query_sql', {
   inputSchema: {
     query: z.string().describe('A single read-only SQL SELECT (or WITH … SELECT)'),
   },
-}, async ({ query }) => withDb((db) => text(Q.querySql(db, query))));
+}, async ({ query }) => freshRead((db) => text(Q.querySql(db, query))));
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

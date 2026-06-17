@@ -33,7 +33,10 @@ const SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql
 // Bump when the on-disk schema changes shape. A .db stamped with an older version
 // is reported stale (server turns this into "run /codegraph-rebuild") rather than
 // queried with the wrong assumptions.
-export const SCHEMA_VERSION = 1;
+// v2 adds files.mtime/size so staleness is "differs from what was indexed" (disk
+// mtime/size vs recorded), not "differs from the last committed git sha" — the
+// latter falsely flags an uncommitted-but-already-reindexed file as stale forever.
+export const SCHEMA_VERSION = 2;
 
 // better-sqlite3 binds a single object arg as NAMED params (SQL `@key` <- obj.key)
 // and any other args as POSITIONAL (`?`). sql.js wants the `@` sigil in the keys
@@ -154,7 +157,7 @@ export function schemaVersion(db) {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta     (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS repos    (id TEXT PRIMARY KEY, project TEXT, name TEXT, root TEXT);
-CREATE TABLE IF NOT EXISTS files    (id TEXT PRIMARY KEY, project TEXT, repo TEXT, path TEXT, lang TEXT);
+CREATE TABLE IF NOT EXISTS files    (id TEXT PRIMARY KEY, project TEXT, repo TEXT, path TEXT, lang TEXT, mtime REAL, size INTEGER);
 CREATE TABLE IF NOT EXISTS symbols  (id TEXT PRIMARY KEY, project TEXT, repo TEXT, file TEXT, name TEXT, kind TEXT, lang TEXT, startLine INTEGER, endLine INTEGER);
 CREATE TABLE IF NOT EXISTS contracts(id TEXT PRIMARY KEY, project TEXT, name TEXT, file TEXT);
 CREATE TABLE IF NOT EXISTS edges    (type TEXT, src TEXT, dst TEXT, project TEXT, token TEXT, cnt INTEGER, resolution TEXT, evidence TEXT, direction TEXT, contract TEXT);
@@ -183,7 +186,7 @@ export function loadGraph(db, graph, { reset = false, log = () => {} } = {}) {
   if (reset && !project) throw new Error('sqlite loadGraph --reset requires graph.project');
 
   const insRepo = db.prepare('INSERT OR REPLACE INTO repos (id,project,name,root) VALUES (@id,@project,@name,@root)');
-  const insFile = db.prepare('INSERT OR REPLACE INTO files (id,project,repo,path,lang) VALUES (@id,@project,@repo,@path,@lang)');
+  const insFile = db.prepare('INSERT OR REPLACE INTO files (id,project,repo,path,lang,mtime,size) VALUES (@id,@project,@repo,@path,@lang,@mtime,@size)');
   const insSym = db.prepare('INSERT OR REPLACE INTO symbols (id,project,repo,file,name,kind,lang,startLine,endLine) VALUES (@id,@project,@repo,@file,@name,@kind,@lang,@startLine,@endLine)');
   const insCon = db.prepare('INSERT OR REPLACE INTO contracts (id,project,name,file) VALUES (@id,@project,@name,@file)');
   const insEdge = db.prepare('INSERT INTO edges (type,src,dst,project,token,cnt,resolution,evidence,direction,contract) VALUES (@type,@src,@dst,@project,@token,@cnt,@resolution,@evidence,@direction,@contract)');
@@ -203,7 +206,7 @@ export function loadGraph(db, graph, { reset = false, log = () => {} } = {}) {
     }
     db.prepare("INSERT OR REPLACE INTO meta (key,value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
     for (const r of graph.repos.values()) insRepo.run(r);
-    for (const f of graph.files.values()) insFile.run(f);
+    for (const f of graph.files.values()) insFile.run({ mtime: null, size: null, ...f });
     for (const s of graph.symbols.values()) insSym.run({ lang: null, ...s });
     for (const c of graph.contracts.values()) insCon.run({ file: null, ...c });
     // Match Neo4j's load semantics exactly:
