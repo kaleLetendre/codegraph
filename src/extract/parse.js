@@ -341,33 +341,84 @@ function pyRoute(node) {
   return null;
 }
 
+// --- messaging / event detection --------------------------------------------
+// Pub/sub call sites whose first string-literal arg is the topic/queue/event.
+// The method name gives direction: publish/emit/send = out (producer),
+// subscribe/on/consume = in (consumer). Topic distinctiveness is filtered later
+// (in the inference step) so this stays a cheap syntactic match.
+const PRODUCE_METHODS = new Set(['publish', 'emit', 'send', 'produce', 'basicpublish', 'sendtoqueue', 'dispatch', 'xadd']);
+const CONSUME_METHODS = new Set(['subscribe', 'on', 'consume', 'basicconsume', 'addlistener', 'xread']);
+function msgRole(method) {
+  const m = String(method || '').toLowerCase().replace(/_/g, '');
+  if (PRODUCE_METHODS.has(m)) return 'out';
+  if (CONSUME_METHODS.has(m)) return 'in';
+  return null;
+}
+function memberMessage(node, method) {
+  const role = msgRole(method);
+  if (!role) return null;
+  const topic = strLiteral(firstArg(node));
+  if (!topic || topic.length < 3 || /\s/.test(topic)) return null;
+  return { kind: 'message', token: topic, role, label: String(method).toLowerCase() };
+}
+function tsMessage(node) {
+  if (node.type !== 'call_expression') return null;
+  const fn = field(node, 'function');
+  if (!fn || fn.type !== 'member_expression') return null;
+  return memberMessage(node, field(fn, 'property')?.text);
+}
+function pyMessage(node) {
+  if (node.type !== 'call') return null;
+  const fn = field(node, 'function');
+  if (!fn || fn.type !== 'attribute') return null;
+  return memberMessage(node, field(fn, 'attribute')?.text);
+}
+
+// Per-language signal rule: a node yields at most one contract candidate
+// { kind, token, role, label } — an HTTP route ('wire') or a message topic
+// ('message'). role is normalized to 'in' (server/consumer) | 'out'
+// (client/producer) | 'unknown' so the inference step is kind-agnostic.
+function wireCandidate(r) {
+  return { kind: 'wire', token: r.path, label: r.method,
+    role: r.side === 'server' ? 'in' : r.side === 'client' ? 'out' : 'unknown' };
+}
+function tsSig(node) {
+  const r = tsRoute(node);
+  return r ? wireCandidate(r) : tsMessage(node);
+}
+function pySig(node) {
+  const r = pyRoute(node);
+  return r ? wireCandidate(r) : pyMessage(node);
+}
+
 const RULES = {
-  typescript: { def: tsDef, call: tsCall, route: tsRoute },
+  typescript: { def: tsDef, call: tsCall, sig: tsSig },
   c: { def: cDef, call: cCall },
-  python: { def: pyDef, call: pyCall, route: pyRoute },
+  python: { def: pyDef, call: pyCall, sig: pySig },
   java: { def: javaDef, call: javaCall },
   kotlin: { def: ktDef, call: ktCall },
 };
 
-// Parse one file's source. Returns { symbols, calls, routes } where:
-//   symbols: [{ name, kind, startLine, endLine }]
-//   calls:   [{ enclosing, name, line }]  enclosing is the def name path's last
-//            symbol's local index, or null for module-level.
-//   routes:  [{ method, path, side, enclosing, line }]  HTTP routes for contract
-//            inference; empty for languages without a route rule.
+// Parse one file's source. Returns { symbols, calls, candidates } where:
+//   symbols:    [{ name, kind, startLine, endLine }]
+//   calls:      [{ enclosing, name, line }]  enclosing is the def name path's last
+//               symbol's local index, or null for module-level.
+//   candidates: [{ kind, token, role, label, enclosing, line }]  contract signals
+//               (HTTP routes, message topics, …) for inference; empty for languages
+//               without a signal rule.
 //
 // We return raw symbol descriptors plus calls keyed by a local symbol index so
 // the caller can mint global ids without this module knowing about repos.
 export function parseSource(source, lang, variant) {
   const rules = RULES[lang];
-  if (!rules) return { symbols: [], calls: [], routes: [] };
+  if (!rules) return { symbols: [], calls: [], candidates: [] };
 
   const parser = parserFor(variant);
   const tree = parser.parse(source);
 
   const symbols = [];
   const calls = [];
-  const routes = [];
+  const candidates = [];
 
   function walk(node, enclosingIdx) {
     let currentIdx = enclosingIdx;
@@ -389,10 +440,10 @@ export function parseSource(source, lang, variant) {
       calls.push({ enclosing: currentIdx, name: callName, line: node.startPosition.row + 1 });
     }
 
-    if (rules.route) {
-      const r = rules.route(node);
-      if (r && r.path) {
-        routes.push({ method: r.method, path: r.path, side: r.side, enclosing: currentIdx, line: node.startPosition.row + 1 });
+    if (rules.sig) {
+      const c = rules.sig(node);
+      if (c && c.token) {
+        candidates.push({ kind: c.kind, token: c.token, role: c.role, label: c.label, enclosing: currentIdx, line: node.startPosition.row + 1 });
       }
     }
 
@@ -402,5 +453,5 @@ export function parseSource(source, lang, variant) {
   }
 
   walk(tree.rootNode, null);
-  return { symbols, calls, routes };
+  return { symbols, calls, candidates };
 }

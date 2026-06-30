@@ -26,11 +26,13 @@ const STOP = new Set([
   'examples', 'properties', 'required', 'enum', 'format', 'items', 'schema',
 ]);
 
-function isDistinctive(tok) {
+export function isDistinctive(tok) {
   if (!tok) return false;
-  if (tok.includes('/')) return tok.length >= 5; // channel address path
+  if (tok.includes('/')) return tok.length >= 5; // path / channel address
   if (STOP.has(tok.toLowerCase())) return false;
-  if (tok.includes('_') && tok.length >= 6) return true; // snake_case field
+  // dotted/colon topic or routing key (order.created, device:heartbeat)
+  if ((tok.includes('.') || tok.includes(':')) && tok.length >= 5 && !/\s/.test(tok)) return true;
+  if (tok.includes('_') && tok.length >= 6) return true; // snake_case field / ENV_VAR
   if (/^[a-zA-Z][a-zA-Z]{9,}$/.test(tok)) return true; // long camelCase identifier
   return false;
 }
@@ -51,8 +53,13 @@ function collectTokens(doc) {
       }
       for (const [k, v] of Object.entries(node)) {
         if (k === 'address' && typeof v === 'string') {
-          const prefix = v.split('/').filter((s) => s && !s.includes('{')).join('/');
-          if (prefix) tokens.add('/' + prefix);
+          if (v.startsWith('/')) {
+            // path address: trim {param} segments to a matchable prefix
+            const prefix = v.split('/').filter((s) => s && !s.includes('{')).join('/');
+            if (prefix) tokens.add('/' + prefix);
+          } else {
+            tokens.add(v); // non-path address (message topic / routing key) — matched literally
+          }
         }
         walk(v, k);
       }

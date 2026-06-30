@@ -12,7 +12,7 @@
 import { readdirSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { findIndexedRoot, readState, updateState } from './lib/state.mjs';
-import { extractRoutes, clusterSeams, synthesizeAsyncApi, formatSeams } from '../src/contracts/infer.js';
+import { extractCandidates, clusterSeams, synthesizeAsyncApi, formatSeams } from '../src/contracts/infer.js';
 
 const SPEC_NAME = 'wiregraph-inferred.asyncapi.yaml';
 
@@ -46,7 +46,7 @@ function main(argv) {
     process.exit(2);
   }
   const root = resolveRoot(projectArg);
-  const seams = clusterSeams(extractRoutes(root));
+  const seams = clusterSeams(extractCandidates(root));
 
   process.stdout.write(formatSeams(seams) + '\n');
   if (!seams.length) return; // formatSeams already explains the likely reasons

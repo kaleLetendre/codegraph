@@ -392,17 +392,17 @@ async function contractsTests() {
   mkdirSync(join(app, '.git'), { recursive: true });
   const project = realpathSync(work);
 
-  const routes = I.extractRoutes(project);
-  ok(routes.some((r) => r.side === 'server' && r.path === '/api/register'), 'contracts: server route detected');
-  ok(routes.some((r) => r.side === 'client' && r.path === '/api/register'), 'contracts: client call detected');
+  const candidates = I.extractCandidates(project);
+  ok(candidates.some((c) => c.kind === 'wire' && c.role === 'in' && c.token === '/api/register'), 'contracts: server route detected (role in)');
+  ok(candidates.some((c) => c.kind === 'wire' && c.role === 'out' && c.token === '/api/register'), 'contracts: client call detected (role out)');
 
   eq(I.toAsyncApiPath('/api/users/:id'), '/api/users/{id}', 'contracts: path normalized to AsyncAPI {param} form');
 
-  const seams = I.clusterSeams(routes);
+  const seams = I.clusterSeams(candidates);
   eq(seams.length, 1, 'contracts: exactly one cross-repo seam (server-only /api/users/:id excluded)');
-  has(seams[0].path, '/api/register', 'contracts: seam path is /api/register');
+  eq(seams[0].token, '/api/register', 'contracts: seam token is /api/register');
   eq(seams[0].repos.length, 2, 'contracts: seam spans both repos');
-  ok(seams[0].serverRepos.includes('svc-api'), 'contracts: server side learned (svc-api defines the route)');
+  ok(seams[0].inRepos.includes('svc-api'), 'contracts: server side learned (svc-api defines the route)');
 
   // round-trip: generated YAML must re-extract through loadContracts/matchContracts
   const yaml = I.synthesizeAsyncApi(seams);
@@ -423,6 +423,40 @@ async function contractsTests() {
   rmSync(work, { recursive: true, force: true });
 }
 
+// Messaging detector: a topic published in one repo and subscribed in another is a
+// cross-repo seam that round-trips to REFERENCES edges, just like an HTTP path.
+async function messagingTest() {
+  const I = await import('../src/contracts/infer.js');
+  const work = mkdtempSync(join(tmpdir(), 'cg-msg-'));
+  const pub = join(work, 'producer'), sub = join(work, 'consumer');
+  mkdirSync(join(pub, '.git'), { recursive: true });
+  mkdirSync(join(sub, '.git'), { recursive: true });
+  writeFileSync(join(pub, 'emit.js'), "function ping(ch) { ch.publish('device.heartbeat', JSON.stringify({ ok: 1 })); }\n");
+  writeFileSync(join(sub, 'recv.js'), "function listen(ch) { ch.subscribe('device.heartbeat', (m) => handle(m)); }\n");
+  const project = realpathSync(work);
+
+  const seams = I.clusterSeams(I.extractCandidates(project));
+  const msg = seams.find((s) => s.kind === 'message' && s.token === 'device.heartbeat');
+  ok(msg, `messaging: cross-repo topic seam detected (got ${seams.map((s) => s.kind + ':' + s.token).join(', ') || 'none'})`);
+  ok(msg && msg.repos.length === 2, 'messaging: topic seam spans producer + consumer repos');
+
+  const yaml = I.synthesizeAsyncApi(seams);
+  has(yaml, 'address: device.heartbeat', 'messaging: generated channel address is the topic');
+  const cdir = join(project, 'contracts'); mkdirSync(cdir, { recursive: true });
+  writeFileSync(join(cdir, 'wiregraph-inferred.asyncapi.yaml'), yaml);
+  const db = join(project, '.wiregraph', 'graph.db');
+  await runBuild({ target: project, project, db, reset: true });
+  const conn = connect(db, { readonly: true });
+  const repos = new Set(
+    conn.prepare("SELECT DISTINCT s.repo repo FROM edges e JOIN symbols s ON s.id=e.src WHERE e.project=? AND e.type='REFERENCES'")
+      .all(project).map((r) => r.repo),
+  );
+  ok(repos.has('producer') && repos.has('consumer'),
+    `messaging: round-trip links producer<->consumer via the topic (got ${[...repos].join(', ') || 'none'})`);
+  conn.close();
+  rmSync(work, { recursive: true, force: true });
+}
+
 console.log('wiregraph regression test');
 await fixtureTests();
 await pythonTests();
@@ -434,5 +468,6 @@ await rebuildDurabilityTest();
 await metricsTests();
 await resolutionTests();
 await contractsTests();
+await messagingTest();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
