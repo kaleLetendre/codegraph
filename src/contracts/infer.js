@@ -64,6 +64,7 @@ function channelKey(kind, token) {
 export function clusterSeams(candidates) {
   const groups = new Map(); // key -> { kind, token, repos: Map(repo->Set(role)), labels: Set }
   for (const c of candidates) {
+    if (c.kind === 'import') continue; // imports become IMPORTS edges, not token-matched contracts
     const tok = normToken(c.kind, c.token);
     if (!isDistinctive(tok)) continue;
     const key = `${c.kind}\0${tok}`;

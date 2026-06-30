@@ -28,6 +28,7 @@ import { findRepoRoots, repoNameFor } from './extract/walk.js';
 import { connect, loadGraph, loadProjectSymbols, pruneFile } from './store/sqlite.js';
 import { wiregraphDir, updateState } from '../scripts/lib/state.mjs';
 import { clusterSeams } from './contracts/infer.js';
+import { resolveImports } from './contracts/imports.js';
 
 function parseArgs(argv) {
   const opts = { target: process.cwd(), reset: false, load: true, dump: null, contracts: null, project: null, files: null, db: null };
@@ -90,6 +91,12 @@ function fullBuild(opts, root, project) {
   } else {
     log('3/4 no contracts dir found — skipping cross-repo wire edges');
   }
+
+  // Cross-repo library/SDK boundaries: resolve import specifiers into IMPORTS edges
+  // (explicit deps, so safe to link across repos — unlike name-based calls).
+  const importEdges = resolveImports(candidates, graph);
+  for (const e of importEdges) graph.addEdge('IMPORTS', e.from, e.to, { evidence: 'import' });
+  if (importEdges.length) log(`  resolved ${importEdges.length} cross-repo IMPORTS edge(s)`);
 
   // Persist the cross-repo seam count + detected contracts dir so SessionStart and
   // /wiregraph-status nudge toward /wiregraph-contracts only when there's real,

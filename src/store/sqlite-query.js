@@ -221,10 +221,10 @@ export function pathBetween(db, project, from, to, fromRepo, toRepo, maxHops = 1
   const starts = symbolMatches(db, project, from, fromRepo).map((r) => r.id);
   const goals = new Set(symbolMatches(db, project, to, toRepo).map((r) => r.id));
   if (!starts.length || !goals.size) return `No path found between "${from}" and "${to}" within ${hops} hops.`;
-  // undirected adjacency over CALLS + REFERENCES
+  // undirected adjacency over CALLS + REFERENCES + IMPORTS (cross-repo deps)
   const adj = new Map();
   const add = (a, b, rel) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push({ to: b, rel }); };
-  for (const e of db.prepare("SELECT src,dst,type FROM edges WHERE project=? AND type IN ('CALLS','REFERENCES')").all(project)) {
+  for (const e of db.prepare("SELECT src,dst,type FROM edges WHERE project=? AND type IN ('CALLS','REFERENCES','IMPORTS')").all(project)) {
     add(e.src, e.dst, e.type); add(e.dst, e.src, e.type);
   }
   // BFS

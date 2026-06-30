@@ -507,6 +507,30 @@ async function potentialTest() {
   rmSync(work, { recursive: true, force: true });
 }
 
+// Library/SDK imports: a package-name import of a sibling repo becomes a cross-repo
+// IMPORTS edge (module -> module), which path_between can traverse.
+async function importsTest() {
+  const work = mkdtempSync(join(tmpdir(), 'cg-imp-'));
+  const lib = join(work, 'shared-lib'), app = join(work, 'app');
+  mkdirSync(join(lib, '.git'), { recursive: true });
+  mkdirSync(join(app, '.git'), { recursive: true });
+  writeFileSync(join(lib, 'package.json'), JSON.stringify({ name: '@acme/shared', main: 'index.js' }));
+  writeFileSync(join(lib, 'index.js'), "export function sharedUtil(x) { return x + 1; }\n");
+  writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'app', main: 'main.js' }));
+  writeFileSync(join(app, 'main.js'), "import { sharedUtil } from '@acme/shared';\nfunction run() { return sharedUtil(1); }\n");
+  const project = realpathSync(work);
+  const db = join(project, '.wiregraph', 'graph.db');
+  await runBuild({ target: project, project, db, reset: true });
+
+  const conn = connect(db, { readonly: true });
+  const imps = conn.prepare("SELECT src, dst FROM edges WHERE project=? AND type='IMPORTS'").all(project);
+  ok(imps.length >= 1, `imports: a cross-repo IMPORTS edge was created (got ${imps.length})`);
+  const hit = imps.find((e) => e.src.includes(':app:main.js:') && e.dst.includes(':shared-lib:index.js:'));
+  ok(hit, `imports: edge links app/main.js -> shared-lib/index.js (got ${imps.map((e) => e.src + '->' + e.dst).join('; ') || 'none'})`);
+  conn.close();
+  rmSync(work, { recursive: true, force: true });
+}
+
 console.log('wiregraph regression test');
 await fixtureTests();
 await pythonTests();
@@ -521,5 +545,6 @@ await contractsTests();
 await messagingTest();
 await stateTest();
 await potentialTest();
+await importsTest();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

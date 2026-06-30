@@ -442,10 +442,40 @@ function cState(node) {                                                  // gete
   return null;
 }
 
+// --- import detection (library/SDK boundaries) ------------------------------
+// The specifier of an import/require/#include. Cross-repo resolution happens in
+// src/contracts/imports.js (it needs the whole workspace + each repo's package
+// name); here we just emit the raw specifier tagged kind:'import'.
+function tsImport(node) {
+  if (node.type === 'import_statement') {
+    const src = strLiteral(field(node, 'source'));
+    return src ? { kind: 'import', token: src, role: 'out', label: 'import' } : null;
+  }
+  if (node.type === 'call_expression') {
+    const fn = field(node, 'function');
+    if (fn?.type === 'identifier' && fn.text === 'require') {
+      const src = strLiteral(firstArg(node));
+      if (src) return { kind: 'import', token: src, role: 'out', label: 'require' };
+    }
+  }
+  return null;
+}
+function cImport(node) {
+  if (node.type === 'preproc_include') {
+    const path = field(node, 'path');
+    if (path?.type === 'string_literal') {            // "foo.h" (local), not <foo.h> (system)
+      let s = path.text;
+      if (s.length >= 2) s = s.slice(1, -1);
+      return s ? { kind: 'import', token: s, role: 'out', label: 'include' } : null;
+    }
+  }
+  return null;
+}
+
 function tsSig(node) {
   const r = tsRoute(node);
   if (r) return wireCandidate(r);
-  return tsMessage(node) || tsState(node);
+  return tsMessage(node) || tsState(node) || tsImport(node);
 }
 function pySig(node) {
   const r = pyRoute(node);
@@ -453,7 +483,7 @@ function pySig(node) {
   return pyMessage(node) || pyState(node);
 }
 function cSig(node) {
-  return cState(node);
+  return cState(node) || cImport(node);
 }
 
 const RULES = {
